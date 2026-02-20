@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<robot name="camera_rig">
+
+
+    <!-- ================= LINKS ================= -->
+
+    <link name="camera">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.08 0.04 0.03"/>
+            </geometry>
+            <material name="blue">
+                <color rgba="0.2 0.4 0.8 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <link name="lidar_frame">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.04" length="0.03"/>
+            </geometry>
+            <material name="green">
+                <color rgba="0.2 0.8 0.2 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <link name="cam_x_link"/>
+    <link name="cam_y_link"/>
+    <link name="cam_z_link"/>
+    <link name="cam_roll_link"/>
+    <link name="cam_pitch_link"/>
+    <link name="cam_yaw_link"/>
+
+    <!-- Livox driver hardcodes imu frame as livox_frame -->
+    <link name="livox_frame">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.02 0.02 0.01"/>
+            </geometry>
+            <material name="red">
+                <color rgba="0.8 0.2 0.2 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <!-- lidar_frame -> camera adjustable chain (6 DOF via joint states) -->
+    <joint name="lidar_to_cam_x" type="prismatic">
+        <parent link="lidar_frame"/>
+        <child link="cam_x_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="1 0 0"/>
+        <limit lower="-0.2" upper="0.2" effort="1" velocity="0.5"/>
+    </joint>
+
+    <joint name="cam_x_to_cam_y" type="prismatic">
+        <parent link="cam_x_link"/>
+        <child link="cam_y_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-0.2" upper="0.2" effort="1" velocity="0.5"/>
+    </joint>
+
+    <joint name="cam_y_to_cam_z" type="prismatic">
+        <parent link="cam_y_link"/>
+        <child link="cam_z_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="0 0 1"/>
+        <limit lower="-0.2" upper="0.2" effort="1" velocity="0.5"/>
+    </joint>
+
+    <joint name="cam_z_to_cam_roll" type="revolute">
+        <parent link="cam_z_link"/>
+        <child link="cam_roll_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="1 0 0"/>
+        <limit lower="-3.14159" upper="3.14159" effort="1" velocity="1.0"/>
+    </joint>
+
+    <joint name="cam_roll_to_cam_pitch" type="revolute">
+        <parent link="cam_roll_link"/>
+        <child link="cam_pitch_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-3.14159" upper="3.14159" effort="1" velocity="1.0"/>
+    </joint>
+
+    <joint name="cam_pitch_to_cam_yaw" type="revolute">
+        <parent link="cam_pitch_link"/>
+        <child link="cam_yaw_link"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <axis xyz="0 0 1"/>
+        <limit lower="-3.14159" upper="3.14159" effort="1" velocity="1.0"/>
+    </joint>
+
+    <joint name="cam_yaw_to_camera" type="fixed">
+        <parent link="cam_yaw_link"/>
+        <child link="camera"/>
+        <origin xyz="0 0 0" rpy="-1.570796 0 -1.570796"/>
+    </joint>
+
+    <!-- lidar_frame → livox_frame (static) -->
+    <joint name="lidar_to_imu" type="fixed">
+        <parent link="lidar_frame"/>
+        <child link="livox_frame"/>
+        <origin xyz="0.011 0.02329 -0.04412" rpy="0 0.5235987755982988 0"/>
+    </joint>
+
+</robot>

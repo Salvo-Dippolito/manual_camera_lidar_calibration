@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<robot name="camera_rig">
+
+    <!-- ================= LINKS ================= -->
+
+    <link name="camera_lidar_rig">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.02 0.02 0.02"/>
+            </geometry>
+            <material name="gray">
+                <color rgba="0.6 0.6 0.6 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <link name="camera">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.08 0.04 0.03"/>
+            </geometry>
+            <material name="blue">
+                <color rgba="0.2 0.4 0.8 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <link name="lidar_frame">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.04" length="0.03"/>
+            </geometry>
+            <material name="green">
+                <color rgba="0.2 0.8 0.2 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <!-- Livox driver hardcodes imu frame as livox_frame -->
+    <link name="livox_frame">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.02 0.02 0.01"/>
+            </geometry>
+            <material name="red">
+                <color rgba="0.8 0.2 0.2 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <!-- ================= JOINTS ================= -->
+
+    <!--
+        Hand-eye calibration T_rig_cam
+        Camera optical frame expressed in Vicon rig marker frame
+        Use directly for TF sendTransform(..., camera_optical, camera_lidar_rig)
+        Rrc [ -0.021595, -0.009855,  0.999718,
+               -0.999636,  0.016379, -0.021432,
+               -0.016163, -0.999817, -0.010205]
+        Prc [  0.027671, -0.011964, -0.110894]
+    -->
+    <joint name="camera_lidar_rig_to_camera" type="fixed">
+        <parent link="camera_lidar_rig"/>
+        <child link="camera"/>
+        <origin
+            xyz="0.027671 0.0 -0.110894"
+            rpy="-1.57 0.0102 -1.57"/>
+    </joint>
+
+    <!-- FAST-LIVO2 calibration -->
+    <!-- <joint name="camera_to_lidar" type="fixed">
+        <parent link="camera"/>
+        <child link="lidar_frame"/>
+        <origin
+            xyz="-0.0 -0.103209 0.028745"
+            rpy="-1.57 -1.57 3.14"/>
+    </joint> -->
+
+    <!-- manual calibration-->
+
+<joint name="lidar_to_camera" type="fixed">
+  <parent link="lidar_frame"/>
+  <child link="camera"/>
+  <origin xyz="0.032269 0.000100 -0.099000" rpy="-1.580796 -1.580796 3.101593"/>
+</joint>
+
+
+
+    <!-- Livox MID-360 IMU extrinsics -->
+    <joint name="lidar_to_imu" type="fixed">
+        <parent link="lidar_frame"/>
+        <child link="livox_frame"/>
+        <origin 
+            xyz="0.011 0.02329 -0.04412"
+            rpy="0 0.5235987755982988 0"/>
+    </joint>
+
+</robot>

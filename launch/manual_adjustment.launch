@@ -1,0 +1,17 @@
+<launch>
+
+
+
+    <!-- Keyboard node publishes /joint_states for lidar_frame -> camera chain -->
+    <node name="move_camera_frame" pkg="manual_camera_lidar_calib" type="move_camera_frame.py" output="screen" />
+
+    <!-- Load URDF -->
+    <param name="robot_description"
+       command="cat $(find manual_camera_lidar_calib)/urdf/camera_rig_static_joints.urdf" />
+
+    <!-- Robot State Publisher -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen" />
+
+
+
+</launch>
