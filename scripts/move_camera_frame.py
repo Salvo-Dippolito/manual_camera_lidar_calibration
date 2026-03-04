@@ -9,6 +9,50 @@ import tf
 from sensor_msgs.msg import JointState
 import numpy as np
 
+from scipy.spatial.transform import Rotation as R
+from scipy.optimize import root
+
+def rotvec_from_matrix(R_mat):
+    """Compute rotation vector from rotation matrix (compatible with old scipy)."""
+    # Compute angle
+    angle = np.arccos(np.clip((np.trace(R_mat) - 1) / 2.0, -1.0, 1.0))
+    if abs(angle) < 1e-8:
+        return np.zeros(3)
+    # Compute rotation axis
+    rx = (R_mat[2,1] - R_mat[1,2]) / (2*np.sin(angle))
+    ry = (R_mat[0,2] - R_mat[2,0]) / (2*np.sin(angle))
+    rz = (R_mat[1,0] - R_mat[0,1]) / (2*np.sin(angle))
+    axis = np.array([rx, ry, rz])
+    return axis * angle
+
+def rotation_error(angles, R_target, axes):
+    a1, a2, a3 = axes
+    R1 = R.from_rotvec(angles[0]*a1).as_dcm()  # old scipy
+    R2 = R.from_rotvec(angles[1]*a2).as_dcm()
+    R3 = R.from_rotvec(angles[2]*a3).as_dcm()
+    R_est = R1 @ R2 @ R3
+    R_diff = R_est.T @ R_target
+    return rotvec_from_matrix(R_diff)  # returns shape (3,)
+
+def decompose_rotation_arbitrary_axes(R_target, axes, initial_guess=None):
+    """
+    Decompose a 3x3 rotation matrix into three rotations about arbitrary axes.
+    Returns angles [theta1, theta2, theta3] in radians.
+    
+    R_target: 3x3 rotation matrix
+    axes: list of 3 unit vectors in LiDAR frame
+    initial_guess: optional starting guess [theta1, theta2, theta3]
+    """
+    if initial_guess is None:
+        initial_guess = [0.0, 0.0, 0.0]
+    
+    sol = root(rotation_error, initial_guess, args=(R_target, axes), method='hybr')
+    
+    if not sol.success:
+        raise RuntimeError(f"Rotation decomposition did not converge: {sol.message}")
+    
+    return sol.x  # theta1, theta2, theta3
+    
 
 class CalibratorGUI(QtWidgets.QWidget):
     def __init__(self):
@@ -189,26 +233,41 @@ class CalibratorGUI(QtWidgets.QWidget):
         try:
             tree = ET.parse(urdf_path)
             root = tree.getroot()
-            joint = root.find("./joint[@name='lidar_to_camera']")
-            if joint is None:
-                joint = root.find("./joint[@name='camera_to_lidar']")
-                if joint is None:
-                    rospy.logwarn("Joint 'camera_to_lidar' not found either")
-                    return
-                else:
-                    origin = joint.find("origin")
-                    xyz = [float(v) for v in origin.attrib["xyz"].split()]
-                    rpy = [float(v) for v in origin.attrib["rpy"].split()]
 
-                    self.roll, self.pitch, self.yaw = rpy[0]+np.pi/2, rpy[1]+np.pi/2, rpy[2]-np.pi
-                    rospy.loginfo("Loaded initial transform from URDF (inverted)")
-                    return
-            origin = joint.find("origin")
-            xyz = [float(v) for v in origin.attrib["xyz"].split()]
-            rpy = [float(v) for v in origin.attrib["rpy"].split()]
-            self.x, self.y, self.z = xyz
-            self.roll, self.pitch, self.yaw = rpy[0]+np.pi/2, rpy[1]+np.pi/2, rpy[2]-np.pi
-            rospy.loginfo("Loaded initial transform from URDF")
+            def read_joint_origin(j):
+                origin = j.find("origin")
+                xyz_vals = [float(v) for v in origin.attrib["xyz"].split()]
+                rpy_vals = [float(v) for v in origin.attrib["rpy"].split()]
+                return xyz_vals, rpy_vals
+
+            joint = root.find("./joint[@name='camera_to_lidar']")
+
+            if joint is not None:
+
+                xyz_cl, rpy_cl = read_joint_origin(joint)
+
+                # Convert cam->lidar into lidar->cam with convention change (switch from camera frame convention to lidar frame convention)
+                #cam->lidar means xyz are lidar position with respect to camera frame
+                #xyz_cl= - R_cl * xyz_lc  
+
+                self.x = -xyz_cl[2]
+                self.y = xyz_cl[0]
+                self.z = xyz_cl[1]
+
+                #switch from camera frame convention to lidar frame convention but using urdf rpy angles (sxyz) and not the convention used in static_joints.urdf (zyx)
+                self.roll = rpy_cl[0] - np.pi/2
+                self.pitch = rpy_cl[1] + np.pi/2
+                self.yaw = rpy_cl[2] 
+
+                rospy.loginfo("Loaded initial transform from URDF joint 'camera_to_lidar'")
+
+
+            if joint is None:
+                rospy.logwarn("Neither joint 'lidar_to_camera' nor 'camera_to_lidar' was found")
+                return
+
+            # Invert camera -> lidar to get lidar -> camer
+            rospy.loginfo("Loaded initial transform from URDF joint 'camera_to_lidar' (inverted)")
         except Exception as e:
             rospy.logwarn(f"URDF load failed: {e}")
 
@@ -218,7 +277,68 @@ class CalibratorGUI(QtWidgets.QWidget):
 
     def save_urdf(self):
 
-        rpy = self.roll - np.pi/2, self.pitch - np.pi/2, self.yaw + np.pi
+        Rx = np.array([
+            [1, 0, 0],
+            [0, np.cos(self.roll), -np.sin(self.roll)],
+            [0, np.sin(self.roll), np.cos(self.roll)]
+        ])
+        
+        Ry = np.array([
+            [np.cos(self.pitch), 0, np.sin(self.pitch)],
+            [0, 1, 0],
+            [-np.sin(self.pitch), 0, np.cos(self.pitch)]
+        ])
+        
+        Rz = np.array([
+            [np.cos(self.yaw), -np.sin(self.yaw), 0],
+            [np.sin(self.yaw), np.cos(self.yaw), 0],
+            [0, 0, 1]
+        ])
+        R_adjust = Rz @ Ry @ Rx
+
+        #rotates from camera frame to lidar frame
+        R_lc=np.array([[0, 0, 1],
+                       [-1, 0, 0],
+                       [0, -1, 0]]) 
+        
+        #rotates from lidar frame to camera frame
+        R_cl=R_lc.T
+
+        rospy.loginfo("R_adjust:\n%s, R_lc:\n%s\n\n", R_adjust, R_lc)
+
+
+        R_target = R_cl @ R_adjust #rotation from lidar to camera frame, including gui adjustment
+
+        rospy.loginfo("R_target:\n%s\n\n", R_target)
+        # R_target=R_target.T
+        # Define three arbitrary axes in LiDAR frame
+        axes = [
+            np.array([1, 0, 0]),
+            np.array([0, 1, 0]),
+            np.array([0, 0, 1])
+        ]
+
+        # Decompose
+        # rpy_lc = decompose_rotation_arbitrary_axes(R_target, axes)
+        rpy_cl = tft.euler_from_matrix(R_target, axes="sxyz")  # returns roll, pitch, yaw in radians
+        print("Arbitrary axes angles (radians):", rpy_cl)
+
+        # # Verify
+        # R_check = R.from_rotvec(rpy_lc[0]*axes[0]).as_dcm() @ \
+        #         R.from_rotvec(rpy_lc[1]*axes[1]).as_dcm() @ \
+        #         R.from_rotvec(rpy_lc[2]*axes[2]).as_dcm()
+
+        # print("Check close to target:", np.allclose(R_check, R_target, atol=1e-8))
+
+        # switch from lidar frame convention to camera frame convention
+        # rpy_cl = (rpy_lc[0] + np.pi/2, rpy_lc[1] - np.pi/2, rpy_lc[2])
+
+        #print warning message with final angles and convention used in URDF (camera->lidar) and that internal state is lidar->camera
+        rospy.logwarn(f"Saving URDF with camera->lidar convention. Internal state is lidar->camera. Final angles: roll={rpy_cl[0]:.6f}, pitch={rpy_cl[1]:.6f}, yaw={rpy_cl[2]:.6f}")
+
+        #O_cl=-R_cl * O_lc
+        xyz_cl = (self.y, self.z, -self.x)
+
 
         default_path = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "urdf", "camera_rig_ideal.urdf")
@@ -237,19 +357,19 @@ class CalibratorGUI(QtWidgets.QWidget):
         with open(save_path, "r") as f:
             urdf_lines = f.readlines()
 
-        # Prepare the new joint string
-        new_joint = f'''<joint name="lidar_to_camera" type="fixed">
-  <parent link="{self.parent}"/>
-  <child link="{self.child}"/>
-  <origin xyz="{self.x:.6f} {self.y:.6f} {self.z:.6f}" rpy="{rpy[0]:.6f} {rpy[1]:.6f} {rpy[2]:.6f}"/>
+        # Prepare the new joint string (camera -> lidar)
+        new_joint = f'''<joint name="camera_to_lidar" type="fixed">
+  <parent link="camera"/>
+  <child link="lidar_frame"/>
+  <origin xyz="{xyz_cl[0]:.6f} {xyz_cl[1]:.6f} {xyz_cl[2]:.6f}" rpy="{rpy_cl[0]:.6f} {rpy_cl[1]:.6f} {rpy_cl[2]:.6f}"/>
 </joint>\n'''
 
-        # Rewrite only the lidar_to_camera joint in the copy
+        # Rewrite only the camera_to_lidar joint in the copy
         inside_joint = False
         output_lines = []
         replaced = False
         for line in urdf_lines:
-            if '<joint' in line and 'name="lidar_to_camera"' in line:
+            if '<joint' in line and 'name="camera_to_lidar"' in line:
                 inside_joint = True
                 output_lines.append(new_joint)
                 replaced = True
