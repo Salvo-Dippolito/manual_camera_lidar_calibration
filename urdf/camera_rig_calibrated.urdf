@@ -68,27 +68,14 @@
         <child link="camera"/>
         <origin
             xyz="0.027671 0.0 -0.110894"
-            rpy="-1.57 0.0102 -1.57"/>
+            rpy="-1.570796 0.0102 -1.570796"/>
     </joint>
 
-    <!-- FAST-LIVO2 calibration -->
-    <!-- <joint name="camera_to_lidar" type="fixed">
-        <parent link="camera"/>
-        <child link="lidar_frame"/>
-        <origin
-            xyz="-0.0 -0.103209 0.028745"
-            rpy="-1.57 -1.57 3.14"/>
-    </joint> -->
-
-    <!-- manual calibration-->
-
-<joint name="lidar_to_camera" type="fixed">
-  <parent link="lidar_frame"/>
-  <child link="camera"/>
-  <origin xyz="-0.030553 0.000100 -0.096469" rpy="-1.570796 -1.587696 3.100593"/>
+<joint name="camera_to_lidar" type="fixed">
+  <parent link="camera"/>
+  <child link="lidar_frame"/>
+  <origin xyz="-0.005000 -0.099000 0.032269" rpy="1.978398 -1.521952 -0.399680"/>
 </joint>
-
-
 
     <!-- Livox MID-360 IMU extrinsics -->
     <joint name="lidar_to_imu" type="fixed">

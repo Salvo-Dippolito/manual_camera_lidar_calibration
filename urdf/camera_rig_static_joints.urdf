@@ -48,6 +48,9 @@
         </visual>
     </link>
 
+
+    <!-- ================= JOINTS ================= -->
+
     <!-- lidar_frame -> camera adjustable chain (6 DOF via joint states) -->
     <joint name="lidar_to_cam_x" type="prismatic">
         <parent link="lidar_frame"/>
@@ -97,6 +100,7 @@
         <limit lower="-3.14159" upper="3.14159" effort="1" velocity="1.0"/>
     </joint>
 
+    <!-- camera optical frame (child) to cam_yaw_link (parent) fixed transform -->
     <joint name="cam_yaw_to_camera" type="fixed">
         <parent link="cam_yaw_link"/>
         <child link="camera"/>
