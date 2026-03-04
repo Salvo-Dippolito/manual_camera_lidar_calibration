@@ -3,7 +3,7 @@ import sys
 import os
 import rospy
 from xml.etree import ElementTree as ET
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 import tf.transformations as tft
 import tf
 from sensor_msgs.msg import JointState
@@ -109,20 +109,85 @@ class CalibratorGUI(QtWidgets.QWidget):
         self.setWindowTitle("Camera–LiDAR TF Calibrator")
         layout = QtWidgets.QVBoxLayout()
         self.spinboxes = {}
+        self.step_groups = {}  # key -> step_attr name ("step_xyz" or "step_rpy")
 
-        def add_row(label, key, step):
+        # --- Step-size controls ---
+        def add_step_slider(label, attr, min_exp, max_exp, layout_parent):
+            """Add a log-scale slider + editable text box for step size.
+            attr: attribute name on self (e.g. 'step_xyz')
+            min_exp / max_exp: exponents of 10 (e.g. -6 .. -1)
+            """
+            row = QtWidgets.QHBoxLayout()
+            lbl = QtWidgets.QLabel(label)
+
+            slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            n_steps = (max_exp - min_exp) * 10  # 10 subdivisions per decade
+            slider.setRange(0, n_steps)
+            cur_exp = np.log10(getattr(self, attr))
+            slider.setValue(int(round((cur_exp - min_exp) * 10)))
+
+            line_edit = QtWidgets.QLineEdit(f"{getattr(self, attr):.6g}")
+            line_edit.setFixedWidth(100)
+            validator = QtGui.QDoubleValidator(10.0**min_exp, 10.0**max_exp, 8)
+            validator.setNotation(QtGui.QDoubleValidator.ScientificNotation)
+            line_edit.setValidator(validator)
+
+            # Prevent mutual signal loops
+            _updating = [False]
+
+            def on_slider(pos):
+                if _updating[0]:
+                    return
+                _updating[0] = True
+                exp = min_exp + pos / 10.0
+                new_step = 10.0 ** exp
+                setattr(self, attr, new_step)
+                line_edit.setText(f"{new_step:.6g}")
+                self._update_spinbox_steps()
+                _updating[0] = False
+
+            def on_text_edited():
+                if _updating[0]:
+                    return
+                _updating[0] = True
+                try:
+                    val = float(line_edit.text())
+                    if val > 0:
+                        setattr(self, attr, val)
+                        exp = np.log10(val)
+                        pos = int(round((exp - min_exp) * 10))
+                        pos = max(0, min(n_steps, pos))
+                        slider.setValue(pos)
+                        self._update_spinbox_steps()
+                except ValueError:
+                    pass
+                _updating[0] = False
+
+            slider.valueChanged.connect(on_slider)
+            line_edit.editingFinished.connect(on_text_edited)
+
+            row.addWidget(lbl)
+            row.addWidget(slider)
+            row.addWidget(line_edit)
+            layout_parent.addLayout(row)
+
+        add_step_slider("XYZ step (m)", "step_xyz", -6, -1, layout)
+        add_step_slider("RPY step (rad)", "step_rpy", -6, -1, layout)
+
+        # --- Value rows ---
+        def add_row(label, key, step_attr):
             row = QtWidgets.QHBoxLayout()
             lbl = QtWidgets.QLabel(label)
             spin = QtWidgets.QDoubleSpinBox()
             spin.setDecimals(6)
             spin.setRange(-10.0, 10.0)
-            spin.setSingleStep(step)
+            spin.setSingleStep(getattr(self, step_attr))
 
             minus_btn = QtWidgets.QPushButton("-")
             plus_btn = QtWidgets.QPushButton("+")
 
-            minus_btn.clicked.connect(lambda: self.increment_value(key, -step))
-            plus_btn.clicked.connect(lambda: self.increment_value(key, step))
+            minus_btn.clicked.connect(lambda _, k=key, sa=step_attr: self.increment_value(k, -getattr(self, sa)))
+            plus_btn.clicked.connect(lambda _, k=key, sa=step_attr: self.increment_value(k, getattr(self, sa)))
             spin.valueChanged.connect(lambda val, k=key: self.set_value(k, val))
 
             row.addWidget(lbl)
@@ -131,14 +196,15 @@ class CalibratorGUI(QtWidgets.QWidget):
             row.addWidget(plus_btn)
             layout.addLayout(row)
             self.spinboxes[key] = spin
+            self.step_groups[key] = step_attr
 
         # X, Y, Z, Roll, Pitch, Yaw
-        add_row("X (m)", "x", self.step_xyz)
-        add_row("Y (m)", "y", self.step_xyz)
-        add_row("Z (m)", "z", self.step_xyz)
-        add_row("Roll (rad)", "roll", self.step_rpy)
-        add_row("Pitch (rad)", "pitch", self.step_rpy)
-        add_row("Yaw (rad)", "yaw", self.step_rpy)
+        add_row("X (m)", "x", "step_xyz")
+        add_row("Y (m)", "y", "step_xyz")
+        add_row("Z (m)", "z", "step_xyz")
+        add_row("Roll (rad)", "roll", "step_rpy")
+        add_row("Pitch (rad)", "pitch", "step_rpy")
+        add_row("Yaw (rad)", "yaw", "step_rpy")
 
         btn_layout = QtWidgets.QHBoxLayout()
         save_btn = QtWidgets.QPushButton("Save URDF")
@@ -151,6 +217,12 @@ class CalibratorGUI(QtWidgets.QWidget):
 
         self.setLayout(layout)
         self.refresh_spinboxes()
+
+    def _update_spinbox_steps(self):
+        """Sync spinbox singleStep with current step_xyz / step_rpy values."""
+        for key, spin in self.spinboxes.items():
+            step_attr = self.step_groups[key]
+            spin.setSingleStep(getattr(self, step_attr))
 
     # ---------------- State helpers ----------------
     def set_value(self, key, value):
@@ -310,28 +382,10 @@ class CalibratorGUI(QtWidgets.QWidget):
         R_target = R_cl @ R_adjust #rotation from lidar to camera frame, including gui adjustment
 
         rospy.loginfo("R_target:\n%s\n\n", R_target)
-        # R_target=R_target.T
-        # Define three arbitrary axes in LiDAR frame
-        axes = [
-            np.array([1, 0, 0]),
-            np.array([0, 1, 0]),
-            np.array([0, 0, 1])
-        ]
 
-        # Decompose
-        # rpy_lc = decompose_rotation_arbitrary_axes(R_target, axes)
         rpy_cl = tft.euler_from_matrix(R_target, axes="sxyz")  # returns roll, pitch, yaw in radians
         print("Arbitrary axes angles (radians):", rpy_cl)
 
-        # # Verify
-        # R_check = R.from_rotvec(rpy_lc[0]*axes[0]).as_dcm() @ \
-        #         R.from_rotvec(rpy_lc[1]*axes[1]).as_dcm() @ \
-        #         R.from_rotvec(rpy_lc[2]*axes[2]).as_dcm()
-
-        # print("Check close to target:", np.allclose(R_check, R_target, atol=1e-8))
-
-        # switch from lidar frame convention to camera frame convention
-        # rpy_cl = (rpy_lc[0] + np.pi/2, rpy_lc[1] - np.pi/2, rpy_lc[2])
 
         #print warning message with final angles and convention used in URDF (camera->lidar) and that internal state is lidar->camera
         rospy.logwarn(f"Saving URDF with camera->lidar convention. Internal state is lidar->camera. Final angles: roll={rpy_cl[0]:.6f}, pitch={rpy_cl[1]:.6f}, yaw={rpy_cl[2]:.6f}")
