@@ -2,7 +2,7 @@
 
 
 
-    <!-- Keyboard node publishes /joint_states for lidar_frame -> camera chain -->
+    <!-- GUI node publishes /joint_states for lidar_frame -> camera chain -->
     <node name="move_camera_frame" pkg="manual_camera_lidar_calib" type="move_camera_frame.py" output="screen" />
 
     <!-- Load URDF -->
