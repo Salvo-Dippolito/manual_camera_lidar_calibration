@@ -318,18 +318,27 @@ class CalibratorGUI(QtWidgets.QWidget):
 
                 xyz_cl, rpy_cl = read_joint_origin(joint)
 
-                # Convert cam->lidar into lidar->cam with convention change (switch from camera frame convention to lidar frame convention)
-                #cam->lidar means xyz are lidar position with respect to camera frame
-                #xyz_cl= - R_cl * xyz_lc  
+                # Convention change matrices
+                R_lc_ = np.array([[0, 0, 1],
+                                  [-1, 0, 0],
+                                  [0, -1, 0]])  # camera axes -> lidar axes
+                R_cl_ = R_lc_.T                   # lidar axes -> camera axes
 
-                self.x = -xyz_cl[2]
-                self.y = xyz_cl[0]
-                self.z = xyz_cl[1]
+                # R_urdf from URDF (maps lidar->camera, i.e. child->parent)
+                R_urdf = tft.euler_matrix(rpy_cl[0], rpy_cl[1], rpy_cl[2], axes="sxyz")[:3, :3]
 
-                #switch from camera frame convention to lidar frame convention but using urdf rpy angles (sxyz) and not the convention used in static_joints.urdf (zyx)
-                self.roll = rpy_cl[0] - np.pi/2
-                self.pitch = rpy_cl[1] + np.pi/2
-                self.yaw = rpy_cl[2] 
+                # Recover camera->lidar rotation and kinematic chain rotation
+                R_cam2lid = R_urdf.T                      # camera->lidar
+                R_chain_rot = R_cam2lid @ R_cl_           # remove convention change at end of chain
+
+                # Decompose intrinsic XYZ (matching kinematic chain revolute joint order)
+                self.roll, self.pitch, self.yaw = tft.euler_from_matrix(R_chain_rot, axes="rxyz")
+
+                # Recover translation: t_chain = -R_cam2lid @ t_urdf
+                t_urdf = np.array(xyz_cl)
+                t_chain = -R_cam2lid @ t_urdf
+                self.x, self.y, self.z = t_chain[0], t_chain[1], t_chain[2]
+
 
                 rospy.loginfo("Loaded initial transform from URDF joint 'camera_to_lidar'")
 
@@ -338,8 +347,7 @@ class CalibratorGUI(QtWidgets.QWidget):
                 rospy.logwarn("Neither joint 'lidar_to_camera' nor 'camera_to_lidar' was found")
                 return
 
-            # Invert camera -> lidar to get lidar -> camer
-            rospy.loginfo("Loaded initial transform from URDF joint 'camera_to_lidar' (inverted)")
+
         except Exception as e:
             rospy.logwarn(f"URDF load failed: {e}")
 
@@ -366,32 +374,31 @@ class CalibratorGUI(QtWidgets.QWidget):
             [np.sin(self.yaw), np.cos(self.yaw), 0],
             [0, 0, 1]
         ])
-        R_adjust = Rz @ Ry @ Rx
+        # Build chain rotation matching kinematic chain (intrinsic XYZ: Rx @ Ry @ Rz)
+        R_chain_rot = Rx @ Ry @ Rz
 
-        #rotates from camera frame to lidar frame
-        R_lc=np.array([[0, 0, 1],
-                       [-1, 0, 0],
-                       [0, -1, 0]]) 
-        
-        #rotates from lidar frame to camera frame
-        R_cl=R_lc.T
+        # Convention change: camera axes -> lidar axes
+        R_lc = np.array([[0, 0, 1],
+                         [-1, 0, 0],
+                         [0, -1, 0]])
 
-        rospy.loginfo("R_adjust:\n%s, R_lc:\n%s\n\n", R_adjust, R_lc)
+        # Full camera->lidar rotation (matches kinematic chain including fixed joint)
+        R_cam2lid = R_chain_rot @ R_lc
 
+        # URDF joint (parent=camera, child=lidar) needs lidar->camera rotation
+        R_urdf = R_cam2lid.T
 
-        R_target = R_cl @ R_adjust #rotation from lidar to camera frame, including gui adjustment
+        rospy.loginfo("R_chain_rot:\n%s\nR_urdf:\n%s\n", R_chain_rot, R_urdf)
 
-        rospy.loginfo("R_target:\n%s\n\n", R_target)
+        rpy_cl = tft.euler_from_matrix(R_urdf, axes="sxyz")
+        print("URDF rpy (radians):", rpy_cl)
 
-        rpy_cl = tft.euler_from_matrix(R_target, axes="sxyz")  # returns roll, pitch, yaw in radians
-        print("Arbitrary axes angles (radians):", rpy_cl)
+        rospy.logwarn(f"Saving URDF camera_to_lidar joint. rpy={rpy_cl[0]:.6f}, {rpy_cl[1]:.6f}, {rpy_cl[2]:.6f}")
 
-
-        #print warning message with final angles and convention used in URDF (camera->lidar) and that internal state is lidar->camera
-        rospy.logwarn(f"Saving URDF with camera->lidar convention. Internal state is lidar->camera. Final angles: roll={rpy_cl[0]:.6f}, pitch={rpy_cl[1]:.6f}, yaw={rpy_cl[2]:.6f}")
-
-        #O_cl=-R_cl * O_lc
-        xyz_cl = (self.y, self.z, -self.x)
+        # Translation: t_urdf = -R_urdf @ t_chain  (lidar origin in camera frame)
+        t_chain = np.array([self.x, self.y, self.z])
+        t_urdf = -R_urdf @ t_chain
+        xyz_cl = (t_urdf[0], t_urdf[1], t_urdf[2])
 
 
         default_path = os.path.normpath(
@@ -411,12 +418,26 @@ class CalibratorGUI(QtWidgets.QWidget):
         with open(save_path, "r") as f:
             urdf_lines = f.readlines()
 
-        # Prepare the new joint string (camera -> lidar)
-        new_joint = f'''<joint name="camera_to_lidar" type="fixed">
-  <parent link="camera"/>
-  <child link="lidar_frame"/>
-  <origin xyz="{xyz_cl[0]:.6f} {xyz_cl[1]:.6f} {xyz_cl[2]:.6f}" rpy="{rpy_cl[0]:.6f} {rpy_cl[1]:.6f} {rpy_cl[2]:.6f}"/>
-</joint>\n'''
+        # Build full 3x3 rotation matrix (camera -> lidar) for the comment
+        R_cl_full = tft.euler_matrix(rpy_cl[0], rpy_cl[1], rpy_cl[2], axes="sxyz")[:3, :3]
+
+        # Prepare the new joint string (camera -> lidar) with rotation matrix & translation comment
+        def fmt_row(row):
+            return ", ".join(f"{v: .6f}" for v in row)
+
+        new_joint = f'''    <!-- Camera to LiDAR  manual calibration
+         R_cl (rotation matrix, camera to lidar)
+           [{fmt_row(R_cl_full[0])}]
+           [{fmt_row(R_cl_full[1])}]
+           [{fmt_row(R_cl_full[2])}]
+         t_cl (translation, camera to lidar)
+           [{xyz_cl[0]:.6f}, {xyz_cl[1]:.6f}, {xyz_cl[2]:.6f}]
+    -->
+    <joint name="camera_to_lidar" type="fixed">
+        <parent link="camera"/>
+        <child link="lidar_frame"/>
+        <origin xyz="{xyz_cl[0]:.6f} {xyz_cl[1]:.6f} {xyz_cl[2]:.6f}" rpy="{rpy_cl[0]:.6f} {rpy_cl[1]:.6f} {rpy_cl[2]:.6f}"/>
+    </joint>\n'''
 
         # Rewrite only the camera_to_lidar joint in the copy
         inside_joint = False

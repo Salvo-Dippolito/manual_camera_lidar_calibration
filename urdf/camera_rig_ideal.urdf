@@ -74,11 +74,11 @@
     <joint name="camera_to_lidar" type="fixed">
         <parent link="camera"/>
         <child link="lidar_frame"/>
-        <origin
-            xyz=" 0.0 -0.099000 0.032269"
-            rpy="1.570796 -1.570796 0.0"/>
+        <origin xyz="-0.004585 -0.097881 0.035223" rpy="-1.167591 -1.523330 2.729625"/>
     </joint>
 
+
+<!-- rpy="1.570796 -1.570796 0.0" -->
     <!-- Livox MID-360 IMU extrinsics -->
     <joint name="lidar_to_imu" type="fixed">
         <parent link="lidar_frame"/>

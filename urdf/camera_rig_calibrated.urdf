@@ -71,12 +71,23 @@
             rpy="-1.570796 0.0102 -1.570796"/>
     </joint>
 
-<joint name="camera_to_lidar" type="fixed">
-  <parent link="camera"/>
-  <child link="lidar_frame"/>
-  <origin xyz="-0.005000 -0.099000 0.032269" rpy="1.978398 -1.521952 -0.399680"/>
-</joint>
+    <!-- Camera to LiDAR  manual calibration
+         R_cl (rotation matrix, camera to lidar)
+           [-0.043478, -0.999012, -0.009167]
+           [ 0.018999,  0.008347, -0.999785]
+           [ 0.998874, -0.043643,  0.018617]
+         t_cl (translation, camera to lidar)
+           [-0.004585, -0.097881, 0.035223]
+    -->
+    <joint name="camera_to_lidar" type="fixed">
+        <parent link="camera"/>
+        <child link="lidar_frame"/>
+        <origin xyz="-0.004585 -0.097881 0.035223" rpy="-1.167591 -1.523330 2.729625"/>
+    </joint>
 
+
+
+<!-- rpy="1.570796 -1.570796 0.0" -->
     <!-- Livox MID-360 IMU extrinsics -->
     <joint name="lidar_to_imu" type="fixed">
         <parent link="lidar_frame"/>
